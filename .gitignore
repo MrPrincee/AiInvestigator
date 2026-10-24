@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+
+# Datasets
+data/
+*.parquet
+
+# Model cache
+.cache/
+models/
+
+# Logs
+*.log
