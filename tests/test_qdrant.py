@@ -361,3 +361,45 @@ def test_delete_document(tmp_path):
 
     finally:
         service.close()
+
+
+
+def test_get_all_chunks(tmp_path):
+    from app.services.qdrant_service import QdrantService
+    from dataset.chunking import Chunk
+
+    service = QdrantService(storage_path=str(tmp_path / "qdrant"))
+
+    chunks = [
+        Chunk(
+            id=f"doc-1:fixed_size:{index}",
+            document_id="doc-1",
+            content=f"Content {index}",
+            chunk_index=index,
+            metadata={"title": "Test Document", "source": "test"},
+        )
+        for index in range(5)
+    ]
+
+    vectors = [[0.1] * 384 for _ in chunks]
+
+    try:
+        service.upsert_chunks(
+            collection_name="test_scroll",
+            chunks=chunks,
+            vectors=vectors,
+        )
+
+        results = service.get_all_chunks(
+            collection_name="test_scroll",
+            batch_size=2,
+        )
+
+        assert len(results) == 5
+        assert {item["chunk_id"] for item in results} == {
+            chunk.id for chunk in chunks
+        }
+        assert all("content" in item for item in results)
+
+    finally:
+        service.close()

@@ -173,6 +173,40 @@ class QdrantService:
             wait=True,
         )
 
+    def get_all_chunks(
+            self,
+            collection_name: str,
+            batch_size: int = 100,
+    ) -> list[dict]:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero")
+
+        if not self.client.collection_exists(collection_name):
+            raise ValueError(f"Collection does not exist: {collection_name}")
+
+        chunks = []
+        offset = None
+
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=collection_name,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            for point in points:
+                chunks.append({
+                    **point.payload,
+                    "id": str(point.id),
+                })
+
+            if offset is None:
+                break
+
+        return chunks
+
 
     def close(self) -> None:
         self.client.close()
