@@ -14,12 +14,8 @@ class Chunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def create_chunk(
-    document: Document,
-    content: str,
-    index: int,
-    strategy: str,
-) -> Chunk:
+def create_chunk(document: Document,content: str,index: int,strategy: str,) -> Chunk:
+
     return Chunk(
         id=f"{document.id}:{strategy}:{index}",
         document_id=document.id,
@@ -34,11 +30,7 @@ def create_chunk(
     )
 
 
-def fixed_size_chunking(
-    document: Document,
-    chunk_size: int = 500,
-    overlap: int = 50,
-) -> list[Chunk]:
+def fixed_size_chunking(document: Document,chunk_size: int = 500,overlap: int = 50,) -> list[Chunk]:
 
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
@@ -70,10 +62,7 @@ def fixed_size_chunking(
     return chunks
 
 
-def sentence_aware_chunking(
-    document: Document,
-    chunk_size: int = 500,
-) -> list[Chunk]:
+def sentence_aware_chunking(document: Document,chunk_size: int = 500,) -> list[Chunk]:
 
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")

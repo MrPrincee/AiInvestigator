@@ -4,11 +4,13 @@ from app.services.qdrant_service import QdrantService
 from app.services.rrf_service import reciprocal_rank_fusion
 
 
+import time
+
 class HybridSearchService:
     def __init__(
-        self,
-        collection_name: str = "hotpotqa_fixed_size",
-        qdrant_url: str = "http://localhost:6333",
+            self,
+            collection_name: str = "hotpotqa_50k_fixed_size",
+            qdrant_url: str = "http://localhost:6333",
     ):
         self.collection_name = collection_name
         self.embedding_service = EmbeddingService()
@@ -21,6 +23,7 @@ class HybridSearchService:
         except Exception:
             self.qdrant_service.close()
             raise
+
 
     def search(
         self,

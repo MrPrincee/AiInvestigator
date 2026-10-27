@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.services.hybrid_search_service import HybridSearchService
@@ -14,12 +14,9 @@ class SearchRequest(BaseModel):
 
 
 @router.post("/search")
-def search_documents(request: SearchRequest):
-    service = None
-
+def search_documents(request: SearchRequest, http_request: Request):
+    service: HybridSearchService = http_request.app.state.search_service
     try:
-        service = HybridSearchService()
-
         results = service.search(
             query=request.query,
             mode=request.mode,
@@ -38,7 +35,3 @@ def search_documents(request: SearchRequest):
             status_code=400,
             detail=str(error),
         ) from error
-
-    finally:
-        if service is not None:
-            service.close()

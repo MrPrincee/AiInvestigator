@@ -15,7 +15,6 @@ def process_document(file_path: str | Path) -> list[Document]:
 
     if extension in {".json", ".jsonl"}:
         return load_json_documents(path)
-
     if extension == ".csv":
         return load_csv_documents(path)
 
@@ -25,12 +24,7 @@ def process_document(file_path: str | Path) -> list[Document]:
     raise ValueError(f"Unsupported file format: {extension}")
 
 
-def chunk_documents(
-    documents: list[Document],
-    strategy: str = "fixed_size",
-    chunk_size: int = 500,
-    overlap: int = 50,
-) -> list[Chunk]:
+def chunk_documents(documents: list[Document],strategy: str = "fixed_size",chunk_size: int = 500,overlap: int = 50,) -> list[Chunk]:
     chunks = []
 
     for document in documents:
@@ -55,10 +49,7 @@ def chunk_documents(
     return chunks
 
 
-def read_document_batches(
-    file_path: str | Path,
-    batch_size: int = 32,
-) -> Iterator[list[Document]]:
+def read_document_batches(file_path: str | Path,batch_size: int = 32,) -> Iterator[list[Document]]:
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero")
 

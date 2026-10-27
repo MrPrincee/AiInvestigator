@@ -207,6 +207,92 @@ class QdrantService:
 
         return chunks
 
+    def get_document_chunks(
+            self,
+            collection_name: str,
+            document_id: str,
+    ) -> list[dict]:
+        if not document_id:
+            raise ValueError("document_id cannot be empty")
+
+        if not self.client.collection_exists(collection_name):
+            return []
+
+        chunks = []
+        offset = None
+
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="document_id",
+                            match=models.MatchValue(value=document_id),
+                        )
+                    ]
+                ),
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            for point in points:
+                chunks.append({
+                    **(point.payload or {}),
+                    "id": str(point.id),
+                })
+
+            if offset is None:
+                break
+
+        return sorted(
+            chunks,
+            key=lambda chunk: chunk.get("chunk_index", 0),
+        )
+
+    def list_documents(
+            self,
+            collection_name: str,
+    ) -> list[dict]:
+        if not self.client.collection_exists(collection_name):
+            return []
+
+        documents = {}
+        offset = None
+
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=collection_name,
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            for point in points:
+                payload = point.payload or {}
+                document_id = payload.get("document_id")
+
+                if not document_id:
+                    continue
+
+                if document_id not in documents:
+                    documents[document_id] = {
+                        "document_id": document_id,
+                        "title": payload.get("title"),
+                        "source": payload.get("source"),
+                        "chunk_count": 0,
+                    }
+
+                documents[document_id]["chunk_count"] += 1
+
+            if offset is None:
+                break
+
+        return list(documents.values())
+
 
     def close(self) -> None:
         self.client.close()
