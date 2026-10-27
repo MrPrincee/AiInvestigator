@@ -10,17 +10,24 @@ from app.services.document_crud_service import DocumentCRUDService
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    application.state.search_service = HybridSearchService()
+    search_service = None
+    crud_service = None
 
     try:
-        application.state.crud_service = DocumentCRUDService()
+        search_service = HybridSearchService()
+        crud_service = DocumentCRUDService()
 
-        try:
-            yield
-        finally:
-            application.state.crud_service.close()
+        application.state.search_service = search_service
+        application.state.crud_service = crud_service
+
+        yield
+
     finally:
-        application.state.search_service.close()
+        if crud_service is not None:
+            crud_service.close()
+
+        if search_service is not None:
+            search_service.close()
 
 app = FastAPI(
     title="AI Investigation Engine",

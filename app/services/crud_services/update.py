@@ -1,12 +1,16 @@
-import hashlib
 from uuid import uuid4
-
-from qdrant_client import models
 
 from dataset.models import Document
 from app.services.document_service import chunk_documents
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
+from app.services.crud_services.common import (
+    content_hash,
+    delete_points,
+    document_points,
+    duplicate_exists,
+    validate_document,
+)
 from app.services.crud_services.read import get_document
 
 
@@ -23,99 +27,43 @@ def update_document(
     if not document_id or not document_id.strip():
         raise ValueError("Document ID cannot be empty")
 
-    title = title.strip()
-    content = content.strip()
-
-    if not title:
-        raise ValueError("Document title cannot be empty")
-
-    if not content:
-        raise ValueError("Document content cannot be empty")
-
-    if chunking_strategy not in {"fixed_size", "sentence_aware"}:
-        raise ValueError("Unsupported chunking strategy")
+    title, content, metadata = validate_document(
+        title,
+        content,
+        metadata,
+        chunking_strategy,
+    )
 
     existing_document = get_document(
-        qdrant_service=qdrant_service,
-        collection_name=collection_name,
-        document_id=document_id,
+        qdrant_service,
+        collection_name,
+        document_id,
     )
 
     if existing_document is None:
         raise LookupError("Document not found")
 
-    metadata = dict(metadata or {})
+    digest = content_hash(content)
 
-    reserved_fields = {
-        "id",
-        "document_id",
-        "chunk_id",
-        "chunk_index",
-        "content",
-        "title",
-        "source",
-        "chunking_strategy",
-        "document_content",
-        "content_hash",
-    }
-
-    if reserved_fields.intersection(metadata):
-        raise ValueError("Metadata contains reserved field names")
-
-    content_hash = hashlib.sha256(
-        content.encode("utf-8")
-    ).hexdigest()
-
-    duplicate_points, _ = qdrant_service.client.scroll(
-        collection_name=collection_name,
-        scroll_filter=models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="content_hash",
-                    match=models.MatchValue(value=content_hash),
-                )
-            ],
-            must_not=[
-                models.FieldCondition(
-                    key="document_id",
-                    match=models.MatchValue(value=document_id),
-                )
-            ],
-        ),
-        limit=1,
-        with_payload=True,
-        with_vectors=False,
-    )
-
-    if duplicate_points:
+    if duplicate_exists(
+        qdrant_service,
+        collection_name,
+        digest,
+        exclude_document_id=document_id,
+    ):
         raise ValueError(
             "A different document with the same content already exists"
         )
 
-    old_points = []
-    offset = None
+    old_points = document_points(
+        qdrant_service,
+        collection_name,
+        document_id,
+        with_payload=False,
+    )
 
-    while True:
-        points, offset = qdrant_service.client.scroll(
-            collection_name=collection_name,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="document_id",
-                        match=models.MatchValue(value=document_id),
-                    )
-                ]
-            ),
-            limit=100,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
-
-        old_points.extend(points)
-
-        if offset is None:
-            break
+    if not old_points:
+        raise LookupError("Document not found")
 
     document = Document(
         id=document_id,
@@ -139,7 +87,7 @@ def update_document(
 
     for chunk in chunks:
         chunk.id = f"{chunk.id}:{version}"
-        chunk.metadata["content_hash"] = content_hash
+        chunk.metadata["content_hash"] = digest
 
         if chunk.chunk_index == 0:
             chunk.metadata["document_content"] = content
@@ -151,6 +99,11 @@ def update_document(
         for chunk in chunks
     ]
 
+    old_point_ids = [
+        point.id
+        for point in old_points
+    ]
+
     try:
         qdrant_service.upsert_chunks(
             collection_name=collection_name,
@@ -158,27 +111,25 @@ def update_document(
             vectors=vectors,
             batch_size=32,
         )
-
-        old_point_ids = [point.id for point in old_points]
-
-        if old_point_ids:
-            qdrant_service.client.delete(
-                collection_name=collection_name,
-                points_selector=models.PointIdsList(
-                    points=old_point_ids,
-                ),
-                wait=True,
-            )
-
     except Exception:
-        qdrant_service.client.delete(
-            collection_name=collection_name,
-            points_selector=models.PointIdsList(
-                points=new_point_ids,
-            ),
-            wait=True,
-        )
+        try:
+            delete_points(
+                qdrant_service,
+                collection_name,
+                new_point_ids,
+            )
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                "Document update failed and cleanup was unsuccessful"
+            ) from cleanup_error
+
         raise
+
+    delete_points(
+        qdrant_service,
+        collection_name,
+        old_point_ids,
+    )
 
     return {
         "status": "updated",

@@ -8,7 +8,7 @@ from app.services.qdrant_service import QdrantService
 
 
 class DocumentCRUDService:
-    COLLECTION_NAME = "ai_investigator_documents"
+    COLLECTION_NAME = "hotpotqa_50k_hybrid"
 
     def __init__(
         self,

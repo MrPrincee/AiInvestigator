@@ -1,29 +1,22 @@
-from app.services.bm25_service import BM25Service
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.services.rrf_service import reciprocal_rank_fusion
 
 
-import time
-
 class HybridSearchService:
     def __init__(
-            self,
-            collection_name: str = "hotpotqa_50k_fixed_size",
-            qdrant_url: str = "http://localhost:6333",
+        self,
+        collection_name: str = "hotpotqa_50k_hybrid",
+        qdrant_url: str = "http://localhost:6333",
     ):
         self.collection_name = collection_name
-        self.embedding_service = EmbeddingService()
         self.qdrant_service = QdrantService(url=qdrant_url)
-        self.bm25_service = BM25Service()
 
         try:
-            chunks = self.qdrant_service.get_all_chunks(collection_name)
-            self.bm25_service.fit(chunks)
+            self.embedding_service = EmbeddingService()
         except Exception:
             self.qdrant_service.close()
             raise
-
 
     def search(
         self,
@@ -38,10 +31,16 @@ class HybridSearchService:
             raise ValueError("top_k must be greater than zero")
 
         if mode not in {"semantic", "keyword", "hybrid"}:
-            raise ValueError(f"Unsupported search mode: {mode}")
+            raise ValueError(
+                "Mode must be 'semantic', 'keyword', or 'hybrid'"
+            )
 
         if mode == "keyword":
-            return self.bm25_service.search(query, top_k=top_k)
+            return self.qdrant_service.keyword_search(
+                collection_name=self.collection_name,
+                query=query,
+                top_k=top_k,
+            )
 
         query_vector = self.embedding_service.embed_texts([query])[0]
 
@@ -60,8 +59,9 @@ class HybridSearchService:
             top_k=candidate_count,
         )
 
-        keyword_results = self.bm25_service.search(
-            query,
+        keyword_results = self.qdrant_service.keyword_search(
+            collection_name=self.collection_name,
+            query=query,
             top_k=candidate_count,
         )
 

@@ -1,10 +1,13 @@
-import hashlib
 from uuid import uuid4
-
-from qdrant_client import models
 
 from dataset.models import Document
 from app.services.document_service import chunk_documents
+from app.services.crud_services.common import (
+    content_hash,
+    delete_points,
+    duplicate_exists,
+    validate_document,
+)
 
 
 def create_document(
@@ -17,60 +20,23 @@ def create_document(
     metadata: dict | None = None,
     chunking_strategy: str = "fixed_size",
 ) -> dict:
-    title = title.strip()
-    content = content.strip()
+    title, content, metadata = validate_document(
+        title,
+        content,
+        metadata,
+        chunking_strategy,
+    )
 
-    if not title:
-        raise ValueError("Document title cannot be empty")
+    digest = content_hash(content)
 
-    if not content:
-        raise ValueError("Document content cannot be empty")
-
-    if chunking_strategy not in {"fixed_size", "sentence_aware"}:
-        raise ValueError("Unsupported chunking strategy")
-
-    metadata = dict(metadata or {})
-
-    reserved_fields = {
-        "id",
-        "document_id",
-        "chunk_id",
-        "chunk_index",
-        "content",
-        "title",
-        "source",
-        "chunking_strategy",
-        "document_content",
-        "content_hash",
-    }
-
-    if reserved_fields.intersection(metadata):
-        raise ValueError("Metadata contains reserved field names")
-
-    content_hash = hashlib.sha256(
-        content.encode("utf-8")
-    ).hexdigest()
-
-    if qdrant_service.client.collection_exists(collection_name):
-        existing_points, _ = qdrant_service.client.scroll(
-            collection_name=collection_name,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="content_hash",
-                        match=models.MatchValue(value=content_hash),
-                    )
-                ]
-            ),
-            limit=1,
-            with_payload=True,
-            with_vectors=False,
+    if duplicate_exists(
+        qdrant_service,
+        collection_name,
+        digest,
+    ):
+        raise ValueError(
+            "A document with the same content already exists"
         )
-
-        if existing_points:
-            raise ValueError(
-                "A document with the same content already exists"
-            )
 
     document_id = str(uuid4())
 
@@ -93,15 +59,20 @@ def create_document(
         raise ValueError("Document produced no chunks")
 
     for chunk in chunks:
-        chunk.metadata["content_hash"] = content_hash
+        chunk.metadata["content_hash"] = digest
 
         if chunk.chunk_index == 0:
             chunk.metadata["document_content"] = content
 
     vectors = embedding_service.embed_chunks(chunks)
 
+    point_ids = [
+        qdrant_service.create_point_id(chunk.id)
+        for chunk in chunks
+    ]
+
     try:
-        chunk_count = qdrant_service.upsert_chunks(
+        count = qdrant_service.upsert_chunks(
             collection_name=collection_name,
             chunks=chunks,
             vectors=vectors,
@@ -109,14 +80,21 @@ def create_document(
         )
     except Exception:
         if qdrant_service.client.collection_exists(collection_name):
-            qdrant_service.delete_document(
-                collection_name=collection_name,
-                document_id=document_id,
-            )
+            try:
+                delete_points(
+                    qdrant_service,
+                    collection_name,
+                    point_ids,
+                )
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    "Document creation failed and cleanup was unsuccessful"
+                ) from cleanup_error
+
         raise
 
     return {
         "status": "created",
         "document_id": document_id,
-        "chunks_affected": chunk_count,
+        "chunks_affected": count,
     }
