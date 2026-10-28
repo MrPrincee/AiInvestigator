@@ -1,10 +1,13 @@
+import os
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
+from dotenv import load_dotenv
 from fastembed import SparseTextEmbedding
 from qdrant_client import QdrantClient, models
 
 from dataset.chunking import Chunk
+
 
 
 class QdrantService:
@@ -17,13 +20,19 @@ class QdrantService:
         storage_path: str = "data/qdrant",
         url: str | None = None,
     ):
-        if url is not None:
-            self.client = QdrantClient(url=url, timeout=120)
-        else:
-            Path(storage_path).mkdir(
-                parents=True,
-                exist_ok=True,
+        load_dotenv()
+
+        qdrant_url = url or os.getenv("QDRANT_URL")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+
+        if qdrant_url:
+            self.client = QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key,
+                timeout=120,
             )
+        else:
+            Path(storage_path).mkdir(parents=True, exist_ok=True)
             self.client = QdrantClient(path=storage_path)
 
         self.sparse_model = SparseTextEmbedding(

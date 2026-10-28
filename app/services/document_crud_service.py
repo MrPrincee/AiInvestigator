@@ -12,7 +12,7 @@ class DocumentCRUDService:
 
     def __init__(
         self,
-        qdrant_url: str = "http://localhost:6333",
+        qdrant_url: str | None = None,
     ):
         self.embedding_service = EmbeddingService()
         self.qdrant_service = QdrantService(url=qdrant_url)

@@ -7,7 +7,7 @@ class HybridSearchService:
     def __init__(
         self,
         collection_name: str = "hotpotqa_50k_hybrid",
-        qdrant_url: str = "http://localhost:6333",
+        qdrant_url: str | None = None,
     ):
         self.collection_name = collection_name
         self.qdrant_service = QdrantService(url=qdrant_url)
