@@ -53,11 +53,11 @@ class LLMService:
         return response.text
 
     def generate_with_tools(
-        self,
-        prompt: str,
-        tools: list[Callable[..., Any]],
-        system_instruction: str | None = None,
-        temperature: float = 0.0,
+            self,
+            prompt: str,
+            tools: list[Callable[..., Any]],
+            system_instruction: str | None = None,
+            temperature: float = 0.0,
     ) -> str:
         if not prompt.strip():
             raise ValueError("Prompt cannot be empty")
@@ -74,16 +74,14 @@ class LLMService:
             ),
         )
 
-        response = self.client.models.generate_content(
+        chat = self.client.chats.create(
             model=self.model_name,
-            contents=prompt,
             config=config,
         )
 
-        if not response.text:
-            raise RuntimeError("LLM returned an empty response")
+        response = chat.send_message(prompt)
 
-        return response.text
+        return response.text or ""
 
     def close(self) -> None:
         self.client.close()

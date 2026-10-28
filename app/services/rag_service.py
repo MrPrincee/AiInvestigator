@@ -4,6 +4,7 @@ from typing import Any
 
 from app.services.hybrid_search_service import HybridSearchService
 from app.services.llm_service import LLMService
+from app.services.tool_calling_service import ToolCallingService
 
 
 class RAGService:
@@ -38,6 +39,7 @@ Return valid JSON only, with no markdown or commentary.
     ):
         self.search_service = search_service
         self.llm_service = llm_service
+        self.tool_calling_service = ToolCallingService(search_service, llm_service)
 
     @staticmethod
     def _build_sources(results: list[dict]) -> list[dict]:
@@ -401,7 +403,10 @@ Rules:
         question: str,
         top_k: int = 8,
         max_hops: int = 3,
+        retrieval_mode: str = "standard",
     ) -> dict:
+        if retrieval_mode not in ("standard", "tool_calling"):
+            raise ValueError("retrieval_mode must be 'standard' or 'tool_calling'")
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question cannot be empty")
         if not 1 <= top_k <= 20:
@@ -409,11 +414,27 @@ Rules:
         if not 1 <= max_hops <= 3:
             raise ValueError("max_hops must be between 1 and 3")
 
-        sources, search_history = self._retrieve_multi_hop(
-            question=question,
-            top_k=top_k,
-            max_hops=max_hops,
-        )
+        if retrieval_mode == "standard":
+            sources, search_history = self._retrieve_multi_hop(
+                question=question,
+                top_k=top_k,
+                max_hops=max_hops,
+            )
+        else:
+            retrieval = self.tool_calling_service.retrieve(
+                question=question,
+                top_k=top_k,
+                max_hops=max_hops,
+            )
+            sources = self._build_sources(retrieval["results"])
+            search_history = [
+                {
+                    "hop": call["hop"],
+                    "query": call["query"],
+                    "results_count": call["results_count"],
+                }
+                for call in retrieval["tool_calls"]
+            ]
         if not sources:
             return self._abstention_response(
                 question=question,
@@ -499,4 +520,3 @@ Rules:
             "retrieved_sources": sources,
             "search_history": search_history,
         }
-

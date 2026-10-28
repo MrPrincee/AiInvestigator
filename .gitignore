@@ -16,9 +16,13 @@ venv/
 .idea/
 
 # Datasets
-data/
+# Datasets
+data/*
+!data/evaluation/
+data/evaluation/*
+!data/evaluation/hotpotqa_evaluation.jsonl
+!data/evaluation/retrieval_results.json
 *.parquet
-
 # Model cache
 .cache/
 models/

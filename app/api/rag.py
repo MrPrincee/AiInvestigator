@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -11,6 +13,7 @@ class RAGRequest(BaseModel):
     question: str = Field(min_length=1)
     top_k: int = Field(default=8, ge=1, le=20)
     max_hops: int = Field(default=3, ge=1, le=3)
+    retrieval_mode: Literal["standard", "tool_calling"] = "standard"
 
 
 @router.post("/ask")
@@ -25,6 +28,7 @@ def ask_question(
             question=request.question,
             top_k=request.top_k,
             max_hops=request.max_hops,
+            retrieval_mode=request.retrieval_mode,
         )
 
     except ValueError as error:

@@ -7,7 +7,7 @@ from app.services.qdrant_service import QdrantService
 
 def index_documents(
     file_path: str | Path,
-    collection_name: str = "hotpotqa_fixed_size",
+    collection_name: str = "hotpotqa_50k_hybrid",
     batch_size: int = 16,
     max_documents: int | None = 100,
     qdrant_url: str = "http://localhost:6333",
