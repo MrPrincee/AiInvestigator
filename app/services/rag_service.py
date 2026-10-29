@@ -1,10 +1,18 @@
-import json
-import re
-from typing import Any
-
 from app.services.hybrid_search_service import HybridSearchService
 from app.services.llm_service import LLMService
 from app.services.tool_calling_service import ToolCallingService
+
+from app.services.rag.evidence import (
+    build_sources,
+    build_context,
+)
+from app.services.rag.response_parser import (
+    parse_json_response,
+    parse_response,
+    parse_planning_response,
+)
+from app.services.rag.response_validator import validate_claims
+from app.services.rag.retrieval_planner import RetrievalPlanner
 
 
 class RAGService:
@@ -39,184 +47,53 @@ Return valid JSON only, with no markdown or commentary.
     ):
         self.search_service = search_service
         self.llm_service = llm_service
-        self.tool_calling_service = ToolCallingService(search_service, llm_service)
+
+        self.tool_calling_service = ToolCallingService(
+            search_service,
+            llm_service,
+        )
+
+        self.retrieval_planner = RetrievalPlanner(
+            search_service=search_service,
+            llm_service=llm_service,
+        )
+
+    # Backward-compatible helpers
 
     @staticmethod
     def _build_sources(results: list[dict]) -> list[dict]:
-        sources = []
-        seen_chunks = set()
-
-        for result in results:
-            chunk_id = result.get("chunk_id")
-            document_id = result.get("document_id")
-            content = result.get("content")
-
-            if not chunk_id or not document_id or not content:
-                continue
-
-            if chunk_id in seen_chunks:
-                continue
-
-            seen_chunks.add(chunk_id)
-
-            sources.append(
-                {
-                    "citation_id": len(sources) + 1,
-                    "document_id": document_id,
-                    "document_title": result.get("title"),
-                    "source": result.get("source"),
-                    "chunk_id": chunk_id,
-                    "chunk_index": result.get("chunk_index"),
-                    "page_number": result.get("page_number"),
-                    "evidence": content,
-                    "retrieval_score": result.get("score"),
-                }
-            )
-
-        return sources
+        return build_sources(results)
 
     @staticmethod
     def _build_context(sources: list[dict]) -> str:
-        blocks = []
+        return build_context(sources)
 
-        for source in sources:
-            blocks.append(
-                f"[{source['citation_id']}]\n"
-                f"Document: {source['document_title']}\n"
-                f"Document ID: {source['document_id']}\n"
-                f"Page: {source['page_number']}\n"
-                f"Evidence:\n{source['evidence']}"
-            )
+    _parse_json_response = staticmethod(parse_json_response)
+    _parse_response = staticmethod(parse_response)
+    _parse_planning_response = staticmethod(parse_planning_response)
+    _validate_claims = staticmethod(validate_claims)
 
-        return "\n\n".join(blocks)
+    def _plan_follow_up_queries(
+        self,
+        question: str,
+        sources: list[dict],
+    ) -> list[str]:
+        return self.retrieval_planner.plan_follow_up_queries(
+            question=question,
+            sources=sources,
+        )
 
-    @staticmethod
-    def _parse_json_response(response: str) -> dict[str, Any]:
-        cleaned = response.strip()
-
-        if cleaned.startswith("```"):
-            cleaned = re.sub(
-                r"^```(?:json)?\s*",
-                "",
-                cleaned,
-                flags=re.IGNORECASE,
-            )
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(
-                "LLM returned invalid JSON"
-            ) from error
-
-        if not isinstance(data, dict):
-            raise RuntimeError(
-                "LLM response must be a JSON object"
-            )
-
-        return data
-
-    @classmethod
-    def _parse_response(cls, response: str) -> dict[str, Any]:
-        data = cls._parse_json_response(response)
-        required = {
-            "is_answerable",
-            "claims",
-            "has_contradictions",
-            "contradictions",
-        }
-        if not required.issubset(data):
-            raise RuntimeError("LLM response is missing required fields")
-        if type(data["is_answerable"]) is not bool:
-            raise RuntimeError("Invalid is_answerable field")
-        if type(data["has_contradictions"]) is not bool:
-            raise RuntimeError("Invalid has_contradictions field")
-        if not isinstance(data["claims"], list):
-            raise RuntimeError("Invalid claims field")
-        contradictions = data["contradictions"]
-        if isinstance(contradictions, dict):
-            contradictions = [contradictions]
-        if not isinstance(contradictions, list):
-            raise RuntimeError("Invalid contradictions field")
-        normalized = []
-        for item in contradictions:
-            if isinstance(item, str) and item.strip():
-                normalized.append({"description": item.strip(), "source_ids": []})
-            elif isinstance(item, dict):
-                description = next(
-                    (
-                        item[key].strip()
-                        for key in ("description", "explanation", "conflict", "text", "details")
-                        if isinstance(item.get(key), str) and item[key].strip()
-                    ),
-                    None,
-                )
-                if description is None:
-                    parts = [
-                        f"{key}: {value}"
-                        for key, value in item.items()
-                        if key not in ("source_ids", "sources", "citation_ids")
-                    ]
-                    description = "; ".join(parts).strip()
-                ids = item.get("source_ids", item.get("citation_ids", []))
-                if not isinstance(ids, list) or not all(type(value) is int for value in ids):
-                    raise RuntimeError("Invalid contradiction source_ids")
-                if not description:
-                    raise RuntimeError("Invalid contradiction description")
-                normalized.append({"description": description, "source_ids": list(dict.fromkeys(ids))})
-            else:
-                raise RuntimeError("Invalid contradiction entry")
-        data["contradictions"] = normalized
-        if data["has_contradictions"] and not normalized:
-            raise RuntimeError("Contradictions flagged without explanation")
-        if normalized and not data["has_contradictions"]:
-            data["has_contradictions"] = True
-        for claim in data["claims"]:
-            if not isinstance(claim, dict):
-                raise RuntimeError("Invalid claim")
-            if not isinstance(claim.get("text"), str) or not claim["text"].strip():
-                raise RuntimeError("Invalid claim text")
-            ids = claim.get("source_ids")
-            if not isinstance(ids, list) or not ids or not all(
-                type(value) is int for value in ids
-            ):
-                raise RuntimeError("Invalid claim source_ids")
-        return data
-
-    @classmethod
-    def _parse_planning_response(
-        cls,
-        response: str,
-    ) -> dict[str, list[str]]:
-        data = cls._parse_json_response(response)
-
-        queries = data.get("queries")
-
-        if not isinstance(queries, list):
-            raise RuntimeError(
-                "Retrieval plan must contain queries"
-            )
-
-        if len(queries) > 2:
-            raise RuntimeError(
-                "Too many follow-up queries"
-            )
-
-        if not all(
-            isinstance(query, str) and query.strip()
-            for query in queries
-        ):
-            raise RuntimeError(
-                "Invalid follow-up query"
-            )
-
-        return {
-            "queries": [
-                query.strip()
-                for query in queries
-            ]
-        }
+    def _retrieve_multi_hop(
+        self,
+        question: str,
+        top_k: int,
+        max_hops: int = 3,
+    ) -> tuple[list[dict], list[dict]]:
+        return self.retrieval_planner.retrieve_multi_hop(
+            question=question,
+            top_k=top_k,
+            max_hops=max_hops,
+        )
 
     @staticmethod
     def _abstention_response(
@@ -238,166 +115,6 @@ Return valid JSON only, with no markdown or commentary.
             "search_history": search_history or [],
         }
 
-    def _plan_follow_up_queries(
-        self,
-        question: str,
-        sources: list[dict],
-    ) -> list[str]:
-        context = self._build_context(sources)
-
-        prompt = f"""
-Original question:
-{question}
-
-Evidence already retrieved:
-{context}
-
-Determine whether additional document searches are necessary
-to answer the original question.
-
-Focus on missing facts, intermediate entities, relationships,
-dates, and evidence from other documents.
-
-Return only valid JSON in this format:
-
-{{
-    "queries": [
-        "first follow-up search query",
-        "second follow-up search query"
-    ]
-}}
-
-Rules:
-- Return at most 2 queries.
-- Return an empty list if the evidence is sufficient.
-- Do not repeat the original question.
-- Do not invent facts.
-- Search queries should be concise and specific.
-"""
-
-        response = self.llm_service.generate(
-            prompt=prompt,
-            system_instruction=(
-                "You are a retrieval planning assistant. "
-                "Return only valid JSON."
-            ),
-            temperature=0.0,
-        )
-
-        data = self._parse_planning_response(response)
-
-        return data["queries"]
-
-    def _retrieve_multi_hop(
-        self,
-        question: str,
-        top_k: int,
-        max_hops: int = 3,
-    ) -> tuple[list[dict], list[dict]]:
-        if not 1 <= max_hops <= 3:
-            raise ValueError(
-                "max_hops must be between 1 and 3"
-            )
-
-        all_results = []
-        search_history = []
-        executed_queries = set()
-
-        initial_results = self.search_service.search(
-            query=question,
-            mode="hybrid",
-            top_k=top_k,
-        )
-
-        all_results.extend(initial_results)
-        executed_queries.add(
-            question.casefold().strip()
-        )
-
-        search_history.append(
-            {
-                "hop": 1,
-                "query": question,
-                "results_count": len(initial_results),
-            }
-        )
-
-        for hop in range(2, max_hops + 1):
-            current_sources = self._build_sources(
-                all_results
-            )
-
-            if not current_sources:
-                break
-
-            follow_up_queries = (
-                self._plan_follow_up_queries(
-                    question=question,
-                    sources=current_sources,
-                )
-            )
-
-            if not follow_up_queries:
-                break
-
-            new_searches = 0
-
-            for query in follow_up_queries:
-                normalized_query = (
-                    query.casefold().strip()
-                )
-
-                if normalized_query in executed_queries:
-                    continue
-
-                executed_queries.add(
-                    normalized_query
-                )
-
-                results = self.search_service.search(
-                    query=query,
-                    mode="hybrid",
-                    top_k=top_k,
-                )
-
-                all_results.extend(results)
-                new_searches += 1
-
-                search_history.append(
-                    {
-                        "hop": hop,
-                        "query": query,
-                        "results_count": len(results),
-                    }
-                )
-
-            if new_searches == 0:
-                break
-
-        return (
-            self._build_sources(all_results),
-            search_history,
-        )
-
-    @staticmethod
-    def _validate_claims(data: dict, available_sources: dict[int, dict]) -> None:
-        for contradiction in data["contradictions"]:
-            for source_id in contradiction["source_ids"]:
-                if source_id not in available_sources:
-                    raise RuntimeError("LLM cited an unknown contradiction source")
-        if not data["is_answerable"]:
-            if data["claims"]:
-                raise RuntimeError("Unanswerable response must not contain claims")
-            return
-        if not data["claims"]:
-            raise RuntimeError("Answerable response must contain claims")
-        for claim in data["claims"]:
-            if re.search(r"\[\d+\]", claim["text"]):
-                raise RuntimeError("Claim text contains citation markers")
-            for source_id in claim["source_ids"]:
-                if source_id not in available_sources:
-                    raise RuntimeError("LLM cited an unknown source")
-
     def answer(
         self,
         question: str,
@@ -406,13 +123,20 @@ Rules:
         retrieval_mode: str = "standard",
     ) -> dict:
         if retrieval_mode not in ("standard", "tool_calling"):
-            raise ValueError("retrieval_mode must be 'standard' or 'tool_calling'")
+            raise ValueError(
+                "retrieval_mode must be 'standard' or 'tool_calling'"
+            )
+
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question cannot be empty")
+
         if not 1 <= top_k <= 20:
             raise ValueError("top_k must be between 1 and 20")
+
         if not 1 <= max_hops <= 3:
             raise ValueError("max_hops must be between 1 and 3")
+
+        # Step 1: Retrieve evidence
 
         if retrieval_mode == "standard":
             sources, search_history = self._retrieve_multi_hop(
@@ -420,13 +144,18 @@ Rules:
                 top_k=top_k,
                 max_hops=max_hops,
             )
+
         else:
             retrieval = self.tool_calling_service.retrieve(
                 question=question,
                 top_k=top_k,
                 max_hops=max_hops,
             )
-            sources = self._build_sources(retrieval["results"])
+
+            sources = self._build_sources(
+                retrieval["results"]
+            )
+
             search_history = [
                 {
                     "hop": call["hop"],
@@ -435,88 +164,151 @@ Rules:
                 }
                 for call in retrieval["tool_calls"]
             ]
+
+        # Step 2: Handle missing evidence
+
         if not sources:
             return self._abstention_response(
                 question=question,
                 search_history=search_history,
             )
 
+        # Step 3: Prepare evidence
+
         available_sources = {
-            source["citation_id"]: source for source in sources
+            source["citation_id"]: source
+            for source in sources
         }
+
         prompt = (
             f"Question:\n{question}\n\n"
             f"Available evidence:\n{self._build_context(sources)}\n\n"
-            "Return the required JSON. Each claim must be grounded in its cited evidence."
+            "Return the required JSON. "
+            "Each claim must be grounded in its cited evidence."
         )
 
+        # Step 4: Generate and validate answer
+
         last_error = None
+
         for attempt in range(2):
             raw_response = self.llm_service.generate(
                 prompt=prompt,
                 system_instruction=self.SYSTEM_INSTRUCTION,
                 temperature=0.0,
             )
+
             try:
                 data = self._parse_response(raw_response)
-                self._validate_claims(data, available_sources)
+
+                self._validate_claims(
+                    data,
+                    available_sources,
+                )
+
                 break
+
             except RuntimeError as error:
                 last_error = error
+
                 prompt = (
-                    f"{prompt}\n\nYour previous output was invalid: {error}. "
-                    "Regenerate the complete JSON with valid claims and existing source IDs."
+                    f"{prompt}\n\n"
+                    f"Your previous output was invalid: {error}. "
+                    "Regenerate the complete JSON with valid claims "
+                    "and existing source IDs."
                 )
+
         else:
             raise RuntimeError(
-                "LLM failed to return a valid evidence-grounded response after retry"
+                "LLM failed to return a valid evidence-grounded "
+                "response after retry"
             ) from last_error
 
-        contradiction_ids = list(dict.fromkeys(
-            source_id
-            for contradiction in data["contradictions"]
-            for source_id in contradiction["source_ids"]
-        ))
+        # Step 5: Process contradictions
+
+        contradiction_ids = list(
+            dict.fromkeys(
+                source_id
+                for contradiction in data["contradictions"]
+                for source_id in contradiction["source_ids"]
+            )
+        )
+
         contradiction_details = [
-            contradiction["description"] for contradiction in data["contradictions"]
+            contradiction["description"]
+            for contradiction in data["contradictions"]
         ]
+
+        # Step 6: Handle unanswerable questions
+
         if not data["is_answerable"]:
             response = self._abstention_response(
                 question=question,
                 retrieved_sources=sources,
                 search_history=search_history,
             )
+
             if data["has_contradictions"]:
                 response["answer"] = (
-                    "The available documents contain conflicting evidence: "
+                    "The available documents contain "
+                    "conflicting evidence: "
                     + " ".join(contradiction_details)
                 )
-            response["has_contradictions"] = data["has_contradictions"]
+
+            response["has_contradictions"] = (
+                data["has_contradictions"]
+            )
+
             response["contradictions"] = contradiction_details
-            response["sources"] = [available_sources[i] for i in contradiction_ids]
+
+            response["sources"] = [
+                available_sources[source_id]
+                for source_id in contradiction_ids
+            ]
+
             return response
+
+        # Step 7: Format cited answer
 
         answer_parts = []
         cited_ids = []
+
         for claim in data["claims"]:
-            unique_ids = list(dict.fromkeys(claim["source_ids"]))
+            unique_ids = list(
+                dict.fromkeys(claim["source_ids"])
+            )
+
             for source_id in unique_ids:
                 if source_id not in cited_ids:
                     cited_ids.append(source_id)
-            citation_text = "".join(f"[{source_id}]" for source_id in unique_ids)
+
+            citation_text = "".join(
+                f"[{source_id}]"
+                for source_id in unique_ids
+            )
+
             claim_text = claim["text"].strip()
-            answer_parts.append(f"{claim_text} {citation_text}")
+
+            answer_parts.append(
+                f"{claim_text} {citation_text}"
+            )
 
         for source_id in contradiction_ids:
             if source_id not in cited_ids:
                 cited_ids.append(source_id)
+
+        # Step 8: Return final response
+
         return {
             "question": question,
             "answer": " ".join(answer_parts),
             "is_answerable": True,
             "has_contradictions": data["has_contradictions"],
             "contradictions": contradiction_details,
-            "sources": [available_sources[source_id] for source_id in cited_ids],
+            "sources": [
+                available_sources[source_id]
+                for source_id in cited_ids
+            ],
             "retrieved_sources": sources,
             "search_history": search_history,
         }
