@@ -15,21 +15,29 @@ class QdrantService:
 
     def __init__(
             self,
-            storage_path: str = "data/qdrant",
+            storage_path: str | None = None,
             url: str | None = None,
     ):
-        qdrant_url = url or settings.QDRANT_URL
-        qdrant_api_key = settings.QDRANT_API_KEY
+        if storage_path is not None and url is not None:
+            raise ValueError("Provide either storage_path or url, not both")
 
-        if qdrant_url:
-            self.client = QdrantClient(
-                url=qdrant_url,
-                api_key=qdrant_api_key,
-                timeout=120,
-            )
-        else:
+        if storage_path is not None:
             Path(storage_path).mkdir(parents=True, exist_ok=True)
             self.client = QdrantClient(path=storage_path)
+        else:
+            qdrant_url = url or settings.QDRANT_URL
+
+            if not qdrant_url:
+                raise ValueError(
+                    "QDRANT_URL is not configured. "
+                    "Provide storage_path for local Qdrant."
+                )
+
+            self.client = QdrantClient(
+                url=qdrant_url,
+                api_key=settings.QDRANT_API_KEY,
+                timeout=120,
+            )
 
         self.sparse_model = SparseTextEmbedding(
             model_name="Qdrant/bm25"

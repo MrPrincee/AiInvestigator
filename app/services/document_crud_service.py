@@ -5,17 +5,38 @@ from app.services.crud_services.delete import delete_document
 
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
+from app.settings import settings
 
 
 class DocumentCRUDService:
-    COLLECTION_NAME = "hotpotqa_50k_hybrid"
+    COLLECTION_NAME = settings.QDRANT_COLLECTION
 
     def __init__(
         self,
         qdrant_url: str | None = None,
+        qdrant_service: QdrantService | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
-        self.embedding_service = EmbeddingService()
-        self.qdrant_service = QdrantService(url=qdrant_url)
+        if qdrant_url is not None and qdrant_service is not None:
+            raise ValueError("Provide either qdrant_url or qdrant_service, not both")
+
+        self._owns_qdrant_service = qdrant_service is None
+        self.qdrant_service = (
+            qdrant_service
+            if qdrant_service is not None
+            else QdrantService(url=qdrant_url)
+        )
+
+        try:
+            self.embedding_service = (
+                embedding_service
+                if embedding_service is not None
+                else EmbeddingService()
+            )
+        except Exception:
+            if self._owns_qdrant_service:
+                self.qdrant_service.close()
+            raise
 
     def create_document(
         self,
@@ -76,4 +97,5 @@ class DocumentCRUDService:
         )
 
     def close(self) -> None:
-        self.qdrant_service.close()
+        if self._owns_qdrant_service:
+            self.qdrant_service.close()
