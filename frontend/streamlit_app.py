@@ -1,18 +1,15 @@
+import os
+
 import requests
 import streamlit as st
 
 
-API_URL = st.secrets.get(
-    "API_URL",
-    "http://127.0.0.1:8000"
-).rstrip("/")
+try:
+    API_URL = st.secrets["API_URL"]
+except (KeyError, FileNotFoundError):
+    API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
-st.set_page_config(
-    page_title="AI Investigator",
-    page_icon="🔎",
-    layout="wide",
-)
-
+API_URL = API_URL.rstrip("/")
 
 def api_request(method, path, **kwargs):
     response = requests.request(
@@ -36,6 +33,19 @@ def api_request(method, path, **kwargs):
 
 def show_error(error):
     st.error(str(error))
+
+
+def check_backend_status():
+    """Check backend availability without calling Gemini or changing documents."""
+    try:
+        response = requests.get(f"{API_URL}/health", timeout=(5, 15))
+        response.raise_for_status()
+        data = response.json()
+        return "connected" if data.get("status") == "ok" else "unavailable"
+    except requests.Timeout:
+        return "waking_up"
+    except (requests.RequestException, ValueError):
+        return "unavailable"
 
 
 def investigation_page():
@@ -364,11 +374,24 @@ st.caption("Evidence-based Multi-Document Investigation Engine")
 with st.sidebar:
     page = st.radio("Navigation", ["AI Investigation", "Document Management"])
     st.divider()
-    try:
-        api_request("GET", "/openapi.json", timeout=5)
+
+    if st.button("Retry Connection", use_container_width=True):
+        st.session_state.pop("backend_status", None)
+
+    if "backend_status" not in st.session_state:
+        with st.spinner("Checking backend connection..."):
+            st.session_state["backend_status"] = check_backend_status()
+
+    backend_status = st.session_state["backend_status"]
+    if backend_status == "connected":
         st.success("Backend Connected")
-    except (requests.RequestException, RuntimeError, ValueError):
-        st.error("Backend Disconnected")
+    elif backend_status == "waking_up":
+        st.warning("Backend may be waking up.")
+        st.caption("Please wait a moment and click Retry Connection.")
+    else:
+        st.error("Backend Unavailable")
+        st.caption("Check the backend URL or try again later.")
+
     st.divider()
 
 if page == "AI Investigation":

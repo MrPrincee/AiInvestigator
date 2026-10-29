@@ -1,15 +1,10 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 
-client = TestClient(app)
-
-
 class FakeHybridSearchService:
-    def __init__(self):
-        self.closed = False
-
     def search(self, query, mode="hybrid", top_k=5):
         if mode not in {"semantic", "keyword", "hybrid"}:
             raise ValueError(f"Unsupported search mode: {mode}")
@@ -25,16 +20,23 @@ class FakeHybridSearchService:
             }
         ][:top_k]
 
-    def close(self):
-        self.closed = True
+
+@pytest.fixture
+def client():
+    previous_service = getattr(app.state, "search_service", None)
+
+    app.state.search_service = FakeHybridSearchService()
+
+    try:
+        yield TestClient(app)
+    finally:
+        if previous_service is None:
+            del app.state.search_service
+        else:
+            app.state.search_service = previous_service
 
 
-def test_search_endpoint(monkeypatch):
-    monkeypatch.setattr(
-        "app.api.search.HybridSearchService",
-        FakeHybridSearchService,
-    )
-
+def test_search_endpoint(client):
     response = client.post(
         "/search",
         json={
@@ -54,12 +56,7 @@ def test_search_endpoint(monkeypatch):
     assert data["results"][0]["chunk_id"] == "test-chunk-1"
 
 
-def test_search_invalid_mode(monkeypatch):
-    monkeypatch.setattr(
-        "app.api.search.HybridSearchService",
-        FakeHybridSearchService,
-    )
-
+def test_search_invalid_mode(client):
     response = client.post(
         "/search",
         json={
@@ -72,7 +69,7 @@ def test_search_invalid_mode(monkeypatch):
     assert response.status_code == 400
 
 
-def test_search_invalid_top_k():
+def test_search_invalid_top_k(client):
     response = client.post(
         "/search",
         json={
@@ -85,7 +82,7 @@ def test_search_invalid_top_k():
     assert response.status_code == 422
 
 
-def test_search_missing_query():
+def test_search_missing_query(client):
     response = client.post(
         "/search",
         json={

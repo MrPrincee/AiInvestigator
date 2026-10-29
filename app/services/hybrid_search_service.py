@@ -1,21 +1,40 @@
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.services.rrf_service import reciprocal_rank_fusion
+from app.settings import settings
 
 
 class HybridSearchService:
     def __init__(
         self,
-        collection_name: str = "hotpotqa_50k_hybrid",
+        collection_name: str | None = None,
         qdrant_url: str | None = None,
+        qdrant_service: QdrantService | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
-        self.collection_name = collection_name
-        self.qdrant_service = QdrantService(url=qdrant_url)
+        if qdrant_url is not None and qdrant_service is not None:
+            raise ValueError(
+                "Provide either qdrant_url or qdrant_service, not both"
+            )
+
+        self.collection_name = collection_name or settings.QDRANT_COLLECTION
+        self._owns_qdrant_service = qdrant_service is None
+
+        self.qdrant_service = (
+            qdrant_service
+            if qdrant_service is not None
+            else QdrantService(url=qdrant_url)
+        )
 
         try:
-            self.embedding_service = EmbeddingService()
+            self.embedding_service = (
+                embedding_service
+                if embedding_service is not None
+                else EmbeddingService()
+            )
         except Exception:
-            self.qdrant_service.close()
+            if self._owns_qdrant_service:
+                self.qdrant_service.close()
             raise
 
     def search(
@@ -71,4 +90,5 @@ class HybridSearchService:
         )
 
     def close(self) -> None:
-        self.qdrant_service.close()
+        if self._owns_qdrant_service:
+            self.qdrant_service.close()

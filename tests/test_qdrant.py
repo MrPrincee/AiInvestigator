@@ -21,7 +21,7 @@ def test_collection_creation(tmp_path):
             "test_documents"
         )
 
-        assert collection.config.params.vectors.size == 384
+        assert collection.config.params.vectors["dense"].size == 384
 
         service.ensure_collection("test_documents")
 
