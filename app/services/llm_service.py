@@ -1,10 +1,10 @@
-import os
 from collections.abc import Callable
 from typing import Any
 
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+from app.settings import settings
 
 
 class LLMService:
@@ -13,14 +13,9 @@ class LLMService:
         model_name: str | None = None,
         api_key: str | None = None,
     ):
-        load_dotenv()
+        self.model_name = model_name or settings.GEMINI_MODEL
 
-        self.model_name = (
-            model_name
-            or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-        )
-
-        resolved_api_key = api_key or os.getenv("GEMINI_API_KEY")
+        resolved_api_key = api_key or settings.GEMINI_API_KEY
 
         if not resolved_api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
@@ -53,11 +48,11 @@ class LLMService:
         return response.text
 
     def generate_with_tools(
-            self,
-            prompt: str,
-            tools: list[Callable[..., Any]],
-            system_instruction: str | None = None,
-            temperature: float = 0.0,
+        self,
+        prompt: str,
+        tools: list[Callable[..., Any]],
+        system_instruction: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         if not prompt.strip():
             raise ValueError("Prompt cannot be empty")
