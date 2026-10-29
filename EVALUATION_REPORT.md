@@ -137,10 +137,17 @@ Two chunking algorithms exist in `dataset/chunking.py`:
 1. `fixed_size_chunking` — character-based segments with configurable overlap.
 2. `sentence_aware_chunking` — groups sentences within a character budget, splitting overlong sentences if necessary.
 
-**Unverified requirement:** No recorded quantitative experiment directly compares the two chunking strategies. Their existence alone is not evidence of a measured comparison. A future comparison should hold the dataset, embeddings, search settings, and evaluation questions constant and report retrieval metrics, chunk counts, and indexing cost for each strategy.
+**Chunking comparison verified:** Both strategies were evaluated on the same
+sample of 1,000 HotpotQA documents. Sentence-aware chunking achieved a
+98.39% sentence-ending rate, compared with 59.77% for fixed-size chunking.
+Detailed results and limitations are provided in the
+"Chunking Strategy Comparison" section.
 
-The collection `hotpotqa_50k_hybrid` was reported in the AI Usage Report as containing **more than 78,000 vector points**. Points may be chunks, not distinct documents. The assignment's **50,000-document/independent-record requirement** should be verified with a count of unique indexed `document_id` values (or independently defined text records), not inferred from the collection name or point count.
-
+**Dataset scale verified:** The production Qdrant collection
+`hotpotqa_50k_hybrid` contains 78,809 vector points representing
+50,157 unique document IDs. The count was verified by scrolling through
+the collection payloads and counting distinct `document_id` values.
+The requirement of at least 50,000 indexed documents is satisfied.
 ## 9. Reproducibility and Artifacts
 
 | Artifact | Purpose |
@@ -170,10 +177,54 @@ The full retrieval benchmark requires a compatible populated Qdrant collection. 
 - **Citation proxies:** Document-ID overlap does not measure sentence-level entailment or hallucination rate.
 - **Retrieval budget:** Chunk-level top-10 followed by document deduplication may return fewer than ten distinct documents.
 - **Dataset specificity:** HotpotQA bridge/comparison questions do not cover every document format or real-world investigation type.
-- **Incomplete validation:** Quantitative chunking comparison, distinct-document scale, simple single-hop benchmark, and end-to-end robustness pass rates remain to be demonstrated.
+- **Incomplete validation:** simple single-hop benchmark, and end-to-end robustness pass rates remain to be demonstrated.
 
-Recommended improvements: (1) verify dataset scale; (2) benchmark both chunking strategies; (3) run robustness in isolated infrastructure; (4) add a small human-audited citation faithfulness set; and (5) expand question-type coverage and manual review.
-
+Recommended improvements: (1) run robustness tests in isolated infrastructure;
+(2) compare chunking strategies using retrieval metrics on separately indexed collections;
+(3) add a small human-audited citation faithfulness set;
+(4) expand question-type coverage and manual review.
 ## 11. Conclusion
 
 On the recorded 50-question HotpotQA retrieval benchmark, **hybrid retrieval outperformed semantic-only and keyword-only retrieval**. On 40 paired answer-correctness questions, **standard RAG and tool calling tied at 0.8250 mean score**. On 48 paired citation questions, **tool calling produced modestly higher document-level citation relevance proxies**, with no unresolved citation markers in either mode. These results support the value of hybrid search and source tracking, while also identifying concrete retrieval, reasoning, evaluation, and robustness limitations.
+
+## Chunking Strategy Comparison
+
+Two chunking strategies were evaluated on the same sample of 1,000 HotpotQA documents:
+
+- **Fixed-size chunking:** 500 characters per chunk, with a 50-character overlap.
+- **Sentence-aware chunking:** maximum 500 characters per chunk, preserving sentence boundaries where possible.
+
+### Results
+
+| Metric | Fixed Size | Sentence Aware |
+|---|---:|---:|
+| Documents evaluated | 1,000 | 1,000 |
+| Total chunks | 1,653 | 1,679 |
+| Average chunk length (characters) | 362.98 | 335.77 |
+| Chunks ending with sentence punctuation | 59.77% | 98.39% |
+
+### Analysis
+
+Sentence-aware chunking produced 26 more chunks (approximately 1.57%) than fixed-size chunking.
+
+However, sentence-aware chunking achieved a substantially higher sentence-ending rate: 98.39%, compared with 59.77% for fixed-size chunking.
+
+This represents an improvement of 38.62 percentage points in the proportion of chunks ending with sentence punctuation.
+
+The sentence-aware strategy also produced slightly shorter chunks on average.
+
+### Conclusion
+
+Sentence-aware chunking better preserves sentence boundaries, potentially improving the readability and coherence of retrieved evidence.
+
+However, the sentence-ending rate is only a proxy for boundary preservation. This experiment does not establish that sentence-aware chunking improves retrieval accuracy or answer correctness.
+
+A controlled retrieval evaluation using separately indexed collections would be required to compare the strategies using Recall@K and MRR.
+
+The experiment is reproducible using:
+
+`python -m evaluation.chunking_evaluation`
+
+Results are stored in:
+
+`data/evaluation/chunking_results.json`

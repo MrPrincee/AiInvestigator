@@ -1,0 +1,15 @@
+{
+  "sample_size": 1000,
+  "fixed_size": {
+    "documents": 1000,
+    "total_chunks": 1653,
+    "average_chunk_length": 362.98,
+    "sentence_ending_rate": 0.5977
+  },
+  "sentence_aware": {
+    "documents": 1000,
+    "total_chunks": 1679,
+    "average_chunk_length": 335.77,
+    "sentence_ending_rate": 0.9839
+  }
+}
