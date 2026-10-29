@@ -15,14 +15,19 @@ venv/
 # IDE
 .idea/
 
-# Datasets
-# Datasets
+# Datasets and evaluation results
 data/*
 !data/evaluation/
 data/evaluation/*
 !data/evaluation/hotpotqa_evaluation.jsonl
 !data/evaluation/retrieval_results.json
+!data/evaluation/answer_results.jsonl
+!data/evaluation/correctness_results.jsonl
+!data/evaluation/citation_results.json
+
+# Large dataset files
 *.parquet
+
 # Model cache
 .cache/
 models/
@@ -30,5 +35,5 @@ models/
 # Logs
 *.log
 
-
+# Local dependencies
 pandas_wheel/
