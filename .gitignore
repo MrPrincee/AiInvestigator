@@ -24,6 +24,7 @@ data/evaluation/*
 !data/evaluation/answer_results.jsonl
 !data/evaluation/correctness_results.jsonl
 !data/evaluation/citation_results.json
+!data/evaluation/chunking_results.json
 
 # Large dataset files
 *.parquet
